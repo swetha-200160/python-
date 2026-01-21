@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    tools {
+        git 'DefaultGit'
+    }
+
     environment {
         IMAGE_NAME = "python-country-app"
         TAG = "${BUILD_NUMBER}"
