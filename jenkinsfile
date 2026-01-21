@@ -13,19 +13,28 @@ pipeline {
 
     stages {
 
-        stage('Checkout') {
-            steps {
-                git branch: 'master',
-                    url: 'https://github.com/your-repo/python-app.git',
-                    credentialsId: 'github-token'
-            }
-        }
+stage('Checkout') {
+    steps {
+        git branch: 'master',
+            url: 'https://github.com/swetha-200160/python-country-app.git',
+            credentialsId: 'github-token'
+    }
+}
+
+       
 
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonarqube-server') {
                     sh '''
-                    sonar-scanner \
+                    sstage('Checkout') {
+    steps {
+        git branch: 'master',
+            url: 'https://github.com/swetha-200160/python-country-app.git',
+            credentialsId: 'github-token'
+    }
+}
+onar-scanner \
                     -Dsonar.projectKey=python-country-app \
                     -Dsonar.sources=. \
                     -Dsonar.language=py \
