@@ -1,0 +1,77 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "python-country-app"
+        TAG = "${BUILD_NUMBER}"
+        DOCKER_REGISTRY = "nexus.example.com:8082"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                git branch: 'master',
+                    url: 'https://github.com/your-repo/python-app.git',
+                    credentialsId: 'github-token'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonarqube-server') {
+                    sh '''
+                    sonar-scanner \
+                    -Dsonar.projectKey=python-country-app \
+                    -Dsonar.sources=. \
+                    -Dsonar.language=py \
+                    -Dsonar.exclusions=**/*.png,.vscode/**
+                    '''
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 2, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh """
+                docker build -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${TAG} .
+                """
+            }
+        }
+
+        stage('Push Image to Nexus') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'nexus-cred',
+                    usernameVariable: 'NEXUS_USER',
+                    passwordVariable: 'NEXUS_PASS'
+                )]) {
+                    sh """
+                    docker login ${DOCKER_REGISTRY} -u $NEXUS_USER -p $NEXUS_PASS
+                    docker push ${DOCKER_REGISTRY}/${IMAGE_NAME}:${TAG}
+                    """
+                }
+            }
+        }
+
+        stage('Deploy Application') {
+            steps {
+                sh """
+                docker rm -f python-app || true
+                docker run -d \
+                  --name python-app \
+                  -p 5000:5000 \
+                  ${DOCKER_REGISTRY}/${IMAGE_NAME}:${TAG}
+                """
+            }
+        }
+    }
+}
