@@ -17,7 +17,7 @@ stage('Checkout') {
     steps {
         git branch: 'master',
             url: 'https://github.com/swetha-200160/python-country-app.git',
-            credentialsId: 'github-token'
+            credentialsId: 'gitrepo'
     }
 }
 
