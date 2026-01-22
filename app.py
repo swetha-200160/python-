@@ -1,13 +1,10 @@
 from flask import Flask, jsonify
-import json
 
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    with open("CountryCodes.json") as f:
-        data = json.load(f)
-    return jsonify(data)
+    return jsonify(message="Hello from Python CI/CD App")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
