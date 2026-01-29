@@ -2,74 +2,73 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "python-ci-cd-app"
-        IMAGE_TAG = "1.0"
-        NEXUS_DOCKER_REPO = "nexus.example.com:8083"
-        SONARQUBE_SERVER = "SonarQube"
+        BUILD_VERSION = "${BUILD_NUMBER}"
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                git branch: 'master',
+                git credentialsId: 'gitrepo',
                     url: 'https://github.com/swetha-200160/python-.git'
             }
         }
 
-        stage('Install Dependencies & Test') {
+        stage('Install Dependencies & Run Tests') {
             steps {
-                sh '''
+                bat '''
+                python -m pip install --upgrade pip
                 pip install -r requirements.txt
-                pytest
+                pytest --cov=. --cov-report=xml
                 '''
             }
         }
 
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv("${SONARQUBE_SERVER}") {
-                    sh 'sonar-scanner'
-                }
+      stage('SonarQube Analysis') {
+    steps {
+        script {
+            def scannerHome = tool 'SonarScanner'
+            withSonarQubeEnv('SonarQube') {
+                bat """
+                "${scannerHome}\\bin\\sonar-scanner.bat" ^
+                -Dsonar.projectKey=python-country-app ^
+                -Dsonar.projectBaseDir="%WORKSPACE%" ^
+                -Dsonar.sources=app.py ^
+                -Dsonar.tests=test_app.py ^
+                -Dsonar.test.inclusions=**/test_*.py ^
+                -Dsonar.python.coverage.reportPaths=coverage.xml ^
+                -Dsonar.exclusions=**/*.png,.vscode/**,**/*.zip,coverage.xml,.coverage
+                """
             }
         }
+    }
+}
 
-        stage('Quality Gate') {
+
+        stage('Package Build') {
             steps {
-                timeout(time: 1, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
-                }
+                bat """
+                if exist python-country-app-%BUILD_VERSION%.zip del python-country-app-%BUILD_VERSION%.zip
+
+                powershell -Command "Compress-Archive -Force -Path app.py,requirements.txt,Dockerfile,README.md,test_app.py -DestinationPath python-country-app-%BUILD_VERSION%.zip"
+
+                dir python-country-app-%BUILD_VERSION%.zip
+                """
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh '''
-                docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                '''
+                bat "docker build -t python-country-app:%BUILD_VERSION% ."
             }
         }
 
-        stage('Push Image to Nexus') {
+        stage('Deploy Application') {
             steps {
-                sh '''
-                docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
-                ${NEXUS_DOCKER_REPO}/${IMAGE_NAME}:${IMAGE_TAG}
-
-                docker push ${NEXUS_DOCKER_REPO}/${IMAGE_NAME}:${IMAGE_TAG}
-                '''
-            }
-        }
-
-        stage('Deploy Container') {
-            steps {
-                sh '''
-                docker rm -f python-app || true
-                docker run -d \
-                  --name python-app \
-                  -p 5000:5000 \
-                  ${NEXUS_DOCKER_REPO}/${IMAGE_NAME}:${IMAGE_TAG}
-                '''
+                bat """
+                docker rm -f python-country-app 2>NUL || exit 0
+                docker run -d -p 5000:5000 --name python-country-app python-country-app:%BUILD_VERSION%
+                """
             }
         }
     }
