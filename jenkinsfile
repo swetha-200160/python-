@@ -2,74 +2,140 @@ pipeline {
     agent any
 
     environment {
-        BUILD_VERSION = "${BUILD_NUMBER}"
+        // SonarQube
+        SONAR_PROJECT_KEY  = 'python-country-app'
+        SONAR_PROJECT_NAME = 'PythonCountryApp'
+
+        // Nexus RAW repository (HOSTED)
+        NEXUS_REPO_URL = 'http://localhost:8081/repository/python-raw'
+        ARTIFACT_NAME  = "python-country-app-${BUILD_NUMBER}.zip"
+
+        // Build tools
+        PIP_CACHE_DIR = 'C:\\pip-cache'
+        DOCKER_IMAGE  = 'python-country-app:latest'
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                git credentialsId: 'gitrepo',
-                    url: 'https://github.com/swetha-200160/python-.git'
+                git credentialsId: 'github',
+                    url: 'https://github.com/swetha-200160/python-.git',
+                    branch: 'master'
             }
         }
 
-        stage('Install Dependencies & Run Tests') {
+        stage('Agent Check') {
+            steps {
+                bat 'python --version'
+                bat 'pip --version'
+                bat 'docker --version'
+            }
+        }
+
+        stage('Install Dependencies & Test') {
             steps {
                 bat '''
                 python -m pip install --upgrade pip
-                pip install -r requirements.txt
-                pytest --cov=. --cov-report=xml
+                pip install --cache-dir %PIP_CACHE_DIR% -r requirements.txt
+                pytest test_app.py --junitxml=pytest-report.xml --cov=app --cov-report=xml
+                '''
+            }
+            post {
+                always {
+                    junit testResults: 'pytest-report.xml', allowEmptyResults: true
+                }
+            }
+        }
+
+        stage('SonarQube Code Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    withCredentials([
+                        string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')
+                    ]) {
+                        bat """
+                        "${tool 'SonarScanner'}\\bin\\sonar-scanner.bat" ^
+                        -Dsonar.projectKey=%SONAR_PROJECT_KEY% ^
+                        -Dsonar.projectName=%SONAR_PROJECT_NAME% ^
+                        -Dsonar.sources=. ^
+                        -Dsonar.python.coverage.reportPaths=coverage.xml ^
+                        -Dsonar.token=%SONAR_TOKEN%
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Clean Workspace Before Packaging') {
+            steps {
+                bat '''
+                rmdir /s /q .scannerwork 2>NUL
+                rmdir /s /q .pytest_cache 2>NUL
+                rmdir /s /q __pycache__ 2>NUL
                 '''
             }
         }
 
-      stage('SonarQube Analysis') {
-    steps {
-        script {
-            def scannerHome = tool 'SonarScanner'
-            withSonarQubeEnv('SonarQube') {
-                bat """
-                "${scannerHome}\\bin\\sonar-scanner.bat" ^
-                -Dsonar.projectKey=python-country-app ^
-                -Dsonar.projectBaseDir="%WORKSPACE%" ^
-                -Dsonar.sources=app.py ^
-                -Dsonar.tests=test_app.py ^
-                -Dsonar.test.inclusions=**/test_*.py ^
-                -Dsonar.python.coverage.reportPaths=coverage.xml ^
-                -Dsonar.exclusions=**/*.png,.vscode/**,**/*.zip,coverage.xml,.coverage
-                """
+        stage('Create Artifact') {
+            steps {
+                bat '''
+                if exist %ARTIFACT_NAME% del %ARTIFACT_NAME%
+                tar -a -c -f %ARTIFACT_NAME% ^
+                    app.py ^
+                    requirements.txt ^
+                    README.md ^
+                    test_app.py ^
+                    Dockerfile
+                '''
             }
         }
-    }
-}
 
-
-        stage('Package Build') {
+        stage('Upload Artifact to Nexus (RAW)') {
             steps {
-                bat """
-                if exist python-country-app-%BUILD_VERSION%.zip del python-country-app-%BUILD_VERSION%.zip
-
-                powershell -Command "Compress-Archive -Force -Path app.py,requirements.txt,Dockerfile,README.md,test_app.py -DestinationPath python-country-app-%BUILD_VERSION%.zip"
-
-                dir python-country-app-%BUILD_VERSION%.zip
-                """
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'nexus-creds',
+                        usernameVariable: 'NEXUS_USER',
+                        passwordVariable: 'NEXUS_PASS'
+                    )
+                ]) {
+                    bat """
+                    echo Uploading artifact to Nexus RAW repository...
+                    curl --fail ^
+                      -u %NEXUS_USER%:%NEXUS_PASS% ^
+                      --upload-file %ARTIFACT_NAME% ^
+                      %NEXUS_REPO_URL%/%ARTIFACT_NAME%
+                    """
+                }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                bat "docker build -t python-country-app:%BUILD_VERSION% ."
+                bat 'docker build -t %DOCKER_IMAGE% .'
             }
         }
 
-        stage('Deploy Application') {
+        stage('Deploy Container (Port 5000)') {
             steps {
-                bat """
+                bat '''
                 docker rm -f python-country-app 2>NUL || exit 0
-                docker run -d -p 5000:5000 --name python-country-app python-country-app:%BUILD_VERSION%
-                """
+                docker run -d ^
+                  -p 5000:5000 ^
+                  --name python-country-app ^
+                  %DOCKER_IMAGE%
+                '''
             }
+        }
+    }
+
+    post {
+        success {
+            echo '✅ Python application deployed successfully on port 5000'
+        }
+        failure {
+            echo '❌ Pipeline failed'
         }
     }
 }
